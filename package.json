@@ -1,15 +1,16 @@
 {
-    "name": "whatsapp-bot",
-    "version": "1.0.0",
-    "main": "index.js",
-    "type": "module",
-    "scripts": {
-      "start": "node index.js"
-    },
-    "dependencies": {
-      "whatsapp-web.js": "^1.23.0",
-      "qrcode-terminal": "^0.12.0",
-      "node-telegram-bot-api": "^0.66.0"
-    }
+  "name": "whatsapp-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp 群组监听 + Telegram 通知机器人",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "whatsapp-web.js": "^1.24.0",
+    "qrcode-terminal": "^0.12.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "xlsx": "^0.18.5"
   }
-  
+}
