@@ -5,7 +5,7 @@ import fs from "fs";
 import XLSX from "xlsx";
 
 // Telegram 机器人配置
-const TELEGRAM_TOKEN = "你的Telegram Bot Token";
+const TELEGRAM_TOKEN = "8401115053:AAG9BHUK3KOq3o7WkBnVmPB_yGeQb7hNU7o";
 const CHAT_ID = 8080502059; // 你刚才获取的 chat_id
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
