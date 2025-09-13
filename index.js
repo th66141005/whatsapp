@@ -1,113 +1,141 @@
-import { Client, LocalAuth } from "whatsapp-web.js";
-import qrcode from "qrcode-terminal";
+import pkg from "whatsapp-web.js";
+const { Client, LocalAuth } = pkg;
+import qrcode from "qrcode";
 import fs from "fs";
-import path from "path";
 import TelegramBot from "node-telegram-bot-api";
 import XLSX from "xlsx";
 
-// ========== 配置 ==========
-const TELEGRAM_TOKEN = "8401115053:AAG9BHUK3KOq3o7WkBnVmPB_yGeQb7hNU7o"; // 填写你的 Telegram 机器人 Token
-const CHAT_ID = 8080502059; // 你的 Telegram chat_id
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+// ========== 配置区域 ==========
+const TELEGRAM_TOKEN = "你的Telegram Bot Token";  // 🔑 填写你的 Bot Token
+const CHAT_ID = 8080502059;                      // 🔑 填写你的 chat_id
 
-const LOG_DIR = path.resolve("./logs");
-if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR);
-
-// ========== WhatsApp 客户端 ==========
+// WhatsApp 客户端
 const client = new Client({
-  authStrategy: new LocalAuth(),
-  puppeteer: { headless: true },
+    authStrategy: new LocalAuth(),
+    puppeteer: { headless: true }
 });
 
-// 推送二维码到 Telegram
-client.on("qr", (qr) => {
-  console.log("请扫描二维码登录 WhatsApp");
-  bot.sendMessage(CHAT_ID, "📱 请扫描登录二维码：");
-  // 生成二维码图片
-  import("qrcode").then(({ toBuffer }) => {
-    toBuffer(qr, { type: "png" }, (err, buffer) => {
-      if (!err) {
-        bot.sendPhoto(CHAT_ID, buffer, { caption: "扫描二维码登录 WhatsApp" });
-      }
-    });
-  });
+// Telegram 机器人
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+
+// 内存存储（群数据）
+let groupMembers = {};  // { groupId: [ {id, name} ] }
+
+// ========== WhatsApp 逻辑 ==========
+
+// 收到二维码
+client.on("qr", async (qr) => {
+    console.log("📌 收到 WhatsApp 登录二维码");
+    try {
+        const qrImage = await qrcode.toDataURL(qr);
+        await bot.sendMessage(CHAT_ID, "📱 WhatsApp 登录二维码生成！");
+        await bot.sendPhoto(CHAT_ID, qrImage);
+    } catch (err) {
+        console.error("二维码生成失败:", err);
+        await bot.sendMessage(CHAT_ID, "❌ 二维码生成失败，请检查日志。");
+    }
 });
 
 // 登录成功
 client.on("ready", async () => {
-  console.log("✅ WhatsApp 登录成功！");
-  bot.sendMessage(CHAT_ID, "✅ WhatsApp 已成功登录并开始监听！");
+    console.log("✅ WhatsApp 登录成功！");
+    const info = await client.info;
+    await bot.sendMessage(
+        CHAT_ID,
+        `✅ WhatsApp 登录成功\n📱 账号: ${info.wid.user}`
+    );
 });
 
-// 监听新成员加入
+// 群成员加入事件
 client.on("group_join", async (notification) => {
-  const group = await client.getChatById(notification.chatId);
-  const participant = notification.recipientIds[0];
+    const groupId = notification.id.remote;
+    const contact = await notification.getContact();
+    const name = contact.pushname || contact.number;
 
-  const logLine = `[${new Date().toLocaleString()}] 群: ${group.name} (${group.id._serialized}) 新成员: ${participant}`;
-  console.log(logLine);
+    if (!groupMembers[groupId]) groupMembers[groupId] = [];
+    groupMembers[groupId].push({ id: contact.id._serialized, name });
 
-  // 保存到对应群的日志文件
-  const logFile = path.join(LOG_DIR, `${group.name}.json`);
-  let logData = [];
-  if (fs.existsSync(logFile)) {
-    logData = JSON.parse(fs.readFileSync(logFile));
-  }
-  logData.push({
-    time: new Date().toISOString(),
-    groupName: group.name,
-    groupId: group.id._serialized,
-    participant,
-  });
-  fs.writeFileSync(logFile, JSON.stringify(logData, null, 2));
+    console.log(`👥 新成员加入群: ${groupId}, 成员: ${name}`);
+    await bot.sendMessage(CHAT_ID, `👥 [${groupId}] 有新成员加入: ${name}`);
 });
 
-// ========== Telegram 机器人 ==========
-bot.onText(/\/start/, (msg) => {
-  const opts = {
+// ========== Telegram 控制逻辑 ==========
+
+// 主菜单
+const mainMenu = {
     reply_markup: {
-      keyboard: [["🔄 更新群列表"], ["📥 下载群数据"]],
-      resize_keyboard: true,
-      one_time_keyboard: false,
-    },
-  };
-  bot.sendMessage(msg.chat.id, "欢迎使用 WhatsApp 群监控机器人！请选择操作：", opts);
+        keyboard: [
+            ["📋 群组列表", "🔄 更新群组"],
+            ["📤 导出群组数据"]
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: false
+    }
+};
+
+// /start 命令
+bot.onText(/\/start/, async (msg) => {
+    await bot.sendMessage(msg.chat.id, "🤖 机器人已启动，请选择操作：", mainMenu);
 });
 
-// 更新群列表
-bot.on("message", async (msg) => {
-  if (msg.text === "🔄 更新群列表") {
+// 群组列表
+bot.onText(/📋 群组列表/, async (msg) => {
     const chats = await client.getChats();
-    const groups = chats.filter((c) => c.isGroup);
+    const groups = chats.filter(c => c.isGroup);
 
-    let reply = "📋 群组列表：\n";
+    if (groups.length === 0) {
+        await bot.sendMessage(msg.chat.id, "❌ 暂无群组。");
+        return;
+    }
+
+    let text = "📋 当前群组列表：\n";
     groups.forEach((g, i) => {
-      reply += `${i + 1}. ${g.name} (ID: ${g.id._serialized})\n`;
+        text += `${i + 1}. ${g.name} (${g.id._serialized})\n`;
     });
 
-    bot.sendMessage(msg.chat.id, reply);
-  }
-
-  // 下载群数据
-  if (msg.text === "📥 下载群数据") {
-    fs.readdirSync(LOG_DIR).forEach((file) => {
-      if (file.endsWith(".json")) {
-        const groupName = path.basename(file, ".json");
-        const jsonData = JSON.parse(fs.readFileSync(path.join(LOG_DIR, file)));
-
-        // 转 Excel
-        const ws = XLSX.utils.json_to_sheet(jsonData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, groupName);
-
-        const excelFile = path.join(LOG_DIR, `${groupName}.xlsx`);
-        XLSX.writeFile(wb, excelFile);
-
-        bot.sendDocument(msg.chat.id, excelFile, {}, { filename: `${groupName}.xlsx` });
-      }
-    });
-  }
+    await bot.sendMessage(msg.chat.id, text);
 });
 
-// 启动 WhatsApp 客户端
+// 更新群组
+bot.onText(/🔄 更新群组/, async (msg) => {
+    const chats = await client.getChats();
+    const groups = chats.filter(c => c.isGroup);
+
+    for (let g of groups) {
+        const participants = await g.participants;
+        groupMembers[g.id._serialized] = participants.map(p => ({
+            id: p.id._serialized,
+            name: p.name || p.id.user
+        }));
+    }
+
+    await bot.sendMessage(msg.chat.id, "🔄 群组成员信息已更新！");
+});
+
+// 导出群组数据
+bot.onText(/📤 导出群组数据/, async (msg) => {
+    if (Object.keys(groupMembers).length === 0) {
+        await bot.sendMessage(msg.chat.id, "❌ 没有可导出的数据，请先更新群组。");
+        return;
+    }
+
+    for (let [groupId, members] of Object.entries(groupMembers)) {
+        const ws = XLSX.utils.json_to_sheet(members);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Members");
+
+        const fileName = `/tmp/${groupId}.xlsx`;
+        XLSX.writeFile(wb, fileName);
+
+        await bot.sendDocument(msg.chat.id, fileName, {}, {
+            filename: `${groupId}.xlsx`,
+            contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        });
+
+        fs.unlinkSync(fileName); // 删除临时文件
+    }
+});
+
+// ========== 启动 ==========
 client.initialize();
+console.log("🚀 服务已启动，等待 WhatsApp 登录...");
